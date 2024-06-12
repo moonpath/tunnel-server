@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+'''
+@File    :   start_tunnel_server
+@Time    :   2024/06/11 10:13:27
+@Author  :   None
+@Version :   1.0
+@Desc    :   None
+'''
+import os
+import re
+import sys
+import time
+import signal
+import getpass
+import argparse
+import subprocess
+from pathlib import Path
+
+
+def signal_handler(sig, frame):
+    global process
+    try:
+        process.terminate()
+    except OSError:
+        pass
+    finally:
+        os.system("sudo service ssh stop")
+        sys.exit(0)
+
+
+def redo(times: int, interval: int, command: list):
+    global process
+    while True:
+        if times > 0:
+            process = subprocess.Popen(command)
+            process.wait()
+            times -= 1
+        elif times == 0:
+            break
+        else:
+            process = subprocess.Popen(command)
+            process.wait()
+        time.sleep(interval)
+    return
+
+
+def set_password(password: str):
+    try:
+        username = getpass.getuser()
+        command = f'echo "{username}:{password}" | sudo chpasswd'
+        subprocess.run(command, shell=True, check=True, text=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"Failed to set password: {e}", file=sys.stderr, flush=True)
+        return False
+
+
+def append_authorized_key(key: str):
+    ssh_path = Path.home()/".ssh"
+    ssh_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    authorized_keys_path = ssh_path/"authorized_keys"
+    authorized_keys_path.touch(mode=0o600, exist_ok=True)
+
+    with authorized_keys_path.open(mode='r') as file:
+        keys = file.readlines()
+    if f'{key.strip()}\n' not in keys:
+        with authorized_keys_path.open(mode='a') as file:
+            file.write(key.strip() + '\n')
+    return
+
+
+def set_private_key(key: str):
+    ssh_path = Path.home()/".ssh"
+    ssh_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    private_key_path = ssh_path/"private_key"
+    with private_key_path.open(mode='w') as file:
+        file.write(key.strip() + '\n')
+    os.chmod(private_key_path, 0o600)
+    return
+
+
+def build_command(server_key, server_password, client_key, client_password, options):
+    if server_key is not None:
+        set_private_key(server_key)
+    if client_key is not None:
+        append_authorized_key(client_key)
+    if client_password is not None:
+        set_password(client_password) or sys.exit(1)
+    
+    ori_command = "".join(options).lower()
+
+    "IdentityFile=".lower() in ori_command or options.append(f"IdentityFile={(Path.home()/'.ssh'/'private_key').absolute()}")
+    "ExitOnForwardFailure=".lower() in ori_command or options.append(f"ExitOnForwardFailure=yes")
+    "TCPKeepAlive=".lower() in ori_command or options.append(f"TCPKeepAlive=yes")
+    "UserKnownHostsFile=".lower() in ori_command or options.append(f"UserKnownHostsFile=/dev/null")
+    "StrictHostKeyChecking=".lower() in ori_command or options.append(f"StrictHostKeyChecking=no")
+    "ConnectTimeout=".lower() in ori_command or options.append(f"ConnectTimeout=10")
+    "ConnectionAttempts=".lower() in ori_command or options.append(f"ConnectionAttempts=3")
+    "ServerAliveInterval=".lower() in ori_command or options.append(f"ServerAliveInterval=10")
+    "ServerAliveCountMax=".lower() in ori_command or options.append(f"ServerAliveCountMax=3")
+
+    command = ["ssh", "-NT"] + [arg for option in options for arg in ["-o", f'{option}']] + [""]
+    return command
+
+
+def is_valid_command(server_key, server_password, client_key, client_password, options):
+    host_name_flag = False
+    user_flag = False
+    for option in options:
+        if "HostName=".lower() in option.lower():
+            host_name_flag = True
+        if "User=".lower() in option.lower():
+            user_flag = True
+    flag = host_name_flag and user_flag
+    if not flag:
+        print("HostName and User must be specified.", file=sys.stderr, flush=True)
+    
+    if server_key is None and not (Path.home()/".ssh"/"private_key").exists() and server_password is None:
+        print("Server key or password must be specified.", file=sys.stderr, flush=True)
+        flag = False
+    
+    if client_key is None and not (Path.home()/".ssh"/"authorized_keys").exists() and client_password is None:
+        print("Client key or password must be specified.", file=sys.stderr, flush=True)
+        flag = False
+
+    if client_password is not None and not is_password_complex(client_password):
+        print("Password must be at least 8 characters long and mixed with uppercase letter, " \
+                "lowercase letter, digit, and special character.", file=sys.stderr, flush=True)
+        flag = False
+    return flag
+
+
+def is_password_complex(password: str):
+    length = 8
+    upper = re.compile(r'[A-Z]')
+    lower = re.compile(r'[a-z]')
+    digit = re.compile(r'\d')
+    non_alnum = re.compile(r'[^0-9A-Za-z]')
+
+    if len(password) >= length and upper.search(password) and lower.search(password) and digit.search(password) and non_alnum.search(password):
+        return True
+    else:
+        return False
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--times", type=int, default=os.getenv("TIMES", -1), help="redo times")
+    parser.add_argument("-i", "--interval", type=int, default=os.getenv("INTERVAL", 5), help="redo interval")
+    parser.add_argument("-s", "--server-key", type=str, default=os.getenv("SERVER_KEY"), help="private key to login server")
+    parser.add_argument("-S", "--server-password", type=str, default=os.getenv("SERVER_PASSWORD"), help="password to login server, currently not supported")
+    parser.add_argument("-c", "--client-key", type=str, default=os.getenv("CLIENT_KEY"), help="public key to login client")
+    parser.add_argument("-C", "--client-password", type=str, default=os.getenv("CLIENT_PASSWORD"), help="password to login client")
+    parser.add_argument("options", nargs='*', type=str, default=os.getenv("OPTIONS", []), help='ssh options')
+
+    args = parser.parse_args()
+
+    args.options = args.options.split(",") if isinstance(args.options, str) else args.options
+
+    command_args = {
+        "server_key": args.server_key,
+        "server_password": args.server_password,
+        "client_key": args.client_key,
+        "client_password": args.client_password,
+        "options": args.options,
+    }
+    is_valid_command(**command_args) or sys.exit(1)
+    command = build_command(**command_args)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    os.system("sudo service ssh restart")
+    os.system(f"sudo {Path(__file__).parent/'set_gateway_host'}")
+
+    try:
+        redo(args.times, args.interval, command)
+    except KeyboardInterrupt:
+        signal_handler(signal.SIGINT, None)
+    return
+
+
+if __name__ == '__main__':
+    main()

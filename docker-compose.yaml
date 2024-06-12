@@ -1,0 +1,26 @@
+version: '3'
+
+networks:
+  default:
+    name: tunnel-server
+    driver: bridge
+
+services:
+  file_server:
+    image: moonpath/tunnel-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tunnel-server
+    ports:
+      - 2222:22
+    # volumes:
+    environment:
+      - TIMES=-1
+      - INTERVAL=5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2048M

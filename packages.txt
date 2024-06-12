@@ -1,0 +1,3 @@
+sudo
+openssh-server
+python3
