@@ -18,6 +18,15 @@ RUN apt install -y openssh-server && \
     sed -i 's/^#\?PermitEmptyPasswords .*$/PermitEmptyPasswords no/' /etc/ssh/sshd_config && \
     echo "AllowUsers $USER" >> /etc/ssh/sshd_config
 
+RUN apt install -y vim && \
+    echo 'set expandtab' > /etc/vim/vimrc && \
+    echo 'set shiftwidth=4' >> /etc/vim/vimrc && \
+    echo 'set ts=4' >> /etc/vim/vimrc && \
+    echo 'set hlsearch' >> /etc/vim/vimrc && \
+    echo 'set fileencodings=utf-8' >> /etc/vim/vimrc && \
+    echo 'set termencoding=utf-8' >> /etc/vim/vimrc && \
+    echo 'set encoding=utf-8' >> /etc/vim/vimrc
+
 RUN apt install -y \
     curl \
     iproute2 \
@@ -26,7 +35,6 @@ RUN apt install -y \
     nmap \ 
     rsync \
     socat \
-    vim \
     wget
 
 RUN apt -y autoclean && \
