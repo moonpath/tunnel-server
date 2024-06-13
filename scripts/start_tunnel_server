@@ -24,7 +24,6 @@ def signal_handler(sig, frame):
     except OSError:
         pass
     finally:
-        os.system("sudo service ssh stop")
         sys.exit(0)
 
 
@@ -170,7 +169,7 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    os.system("sudo service ssh restart")
+    os.system("sudo service ssh start")
     os.system(f"sudo {Path(__file__).parent/'set_gateway_host'}")
 
     try:
